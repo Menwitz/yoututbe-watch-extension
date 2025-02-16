@@ -1,68 +1,128 @@
-// background.js
+// content.js
 
-// Helper function to extract the YouTube video ID from a URL.
-function getVideoId(url) {
-    try {
-      let urlObj = new URL(url);
-      return urlObj.searchParams.get("v");
-    } catch (e) {
-      return null;
+(function() {
+  // Create the main container for the sidebar.
+  const panel = document.createElement('div');
+  panel.id = 'yt-watchlist-panel';
+  panel.style.cssText = `
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 320px;
+    height: 100%;
+    background: #f9f9f9;
+    border-left: 1px solid #ccc;
+    z-index: 999999;
+    overflow-y: auto;
+    font-family: sans-serif;
+    box-shadow: -2px 0 5px rgba(0,0,0,0.1);
+  `;
+
+  // Create a header with a title and an internal toggle button.
+  const header = document.createElement('div');
+  header.style.cssText = "background: #333; color: #fff; padding: 10px; font-size: 16px; display: flex; justify-content: space-between; align-items: center;";
+  header.innerHTML = `<span>YouTube Watchlist</span><button id="yt-watchlist-toggle" style="background: #555; color: #fff; border: none; padding: 5px 10px; cursor: pointer;">–</button>`;
+  panel.appendChild(header);
+
+  // Create a container for the list of videos.
+  const listContainer = document.createElement('div');
+  listContainer.id = 'yt-watchlist-list';
+  panel.appendChild(listContainer);
+
+  // Append the panel to the document body.
+  document.body.appendChild(panel);
+
+  // Internal toggle button for collapsing/expanding the video list.
+  document.getElementById('yt-watchlist-toggle').addEventListener('click', () => {
+    const currentDisplay = window.getComputedStyle(listContainer).display;
+    if (currentDisplay === 'none') {
+      listContainer.style.display = 'block';
+      document.getElementById('yt-watchlist-toggle').innerText = '–';
+      console.log("Internal toggle: Showing video list");
+    } else {
+      listContainer.style.display = 'none';
+      document.getElementById('yt-watchlist-toggle').innerText = '+';
+      console.log("Internal toggle: Hiding video list");
     }
-  }
-  
-  // This function scans all open tabs, filters YouTube watch pages, and updates the watch list.
-  function updateWatchList() {
-    chrome.tabs.query({}, (tabs) => {
-      let newList = [];
-      tabs.forEach(tab => {
-        if (tab.url && tab.url.includes("youtube.com/watch")) {
-          let videoId = getVideoId(tab.url);
-          if (videoId) {
-            newList.push({
-              tabId: tab.id,                        // Unique tab identifier.
-              videoId: videoId,                     // YouTube video ID.
-              title: tab.title,                     // The tab title.
-              url: tab.url,                         // The full URL.
-              thumbnail: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, // Thumbnail URL.
-              timestamp: Date.now()                 // Time added.
-            });
-          }
-        }
+  });
+
+  // Function to render the watch list.
+  function renderWatchList(watchList) {
+    listContainer.innerHTML = '';
+    if (watchList.length === 0) {
+      listContainer.innerHTML = '<p style="padding: 10px; color: #666;">No videos in watchlist.</p>';
+      return;
+    }
+    watchList.forEach(video => {
+      const videoDiv = document.createElement('div');
+      videoDiv.style.cssText = 'display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #eee;';
+      
+      // Thumbnail image.
+      const thumb = document.createElement('img');
+      thumb.src = video.thumbnail;
+      thumb.style.cssText = 'width: 80px; height: 45px; object-fit: cover; margin-right: 10px; cursor: pointer;';
+      thumb.title = "Open Video";
+      thumb.addEventListener('click', () => {
+        window.open(video.url, '_blank');
       });
-      // Update the watch list in Chrome's local storage.
-      chrome.storage.local.set({ watchList: newList });
-    });
-  }
-  
-  // Listen for tab updates and add new YouTube watch pages.
-  chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-    if (changeInfo.status === 'complete' && tab.url && tab.url.includes("youtube.com/watch")) {
-      updateWatchList();
-    }
-  });
-  
-  // Listen for tab removals to update the watch list accordingly.
-  chrome.tabs.onRemoved.addListener((tabId, removeInfo) => {
-    updateWatchList();
-  });
-  
-  // Handle messages from the content script (e.g., marking a video as watched).
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === "markAsWatched") {
-      // Remove the video with the provided videoId from the watch list.
-      chrome.storage.local.get({ watchList: [] }, (result) => {
-        let updatedList = result.watchList.filter(video => video.videoId !== message.videoId);
-        chrome.storage.local.set({ watchList: updatedList }, () => {
-          sendResponse({ status: "success" });
+      videoDiv.appendChild(thumb);
+
+      // Container for video info and action.
+      const infoDiv = document.createElement('div');
+      infoDiv.style.flexGrow = '1';
+
+      // Title element.
+      const title = document.createElement('div');
+      title.textContent = video.title;
+      title.style.cssText = 'font-size: 14px; font-weight: bold; color: #333; cursor: pointer;';
+      title.addEventListener('click', () => {
+        window.open(video.url, '_blank');
+      });
+      infoDiv.appendChild(title);
+
+      // "Mark as Watched" button.
+      const markBtn = document.createElement('button');
+      markBtn.textContent = 'Watched';
+      markBtn.style.cssText = 'margin-top: 5px; padding: 3px 6px; font-size: 12px; cursor: pointer;';
+      markBtn.addEventListener('click', () => {
+        chrome.runtime.sendMessage({ action: "markAsWatched", videoId: video.videoId }, (response) => {
+          console.log("Marked as watched:", video.videoId, "Response:", response);
         });
       });
-      return true; // Indicate asynchronous response.
+      infoDiv.appendChild(markBtn);
+
+      videoDiv.appendChild(infoDiv);
+      listContainer.appendChild(videoDiv);
+    });
+  }
+
+  // Initial fetch and render of the watch list.
+  chrome.storage.local.get({ watchList: [] }, (result) => {
+    renderWatchList(result.watchList);
+    console.log("Initial watch list rendered", result.watchList);
+  });
+
+  // Update the UI when the watch list changes.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes.watchList) {
+      renderWatchList(changes.watchList.newValue);
+      console.log("Watch list updated", changes.watchList.newValue);
     }
   });
-  
-  // **New:** Listen for the extension button click to toggle the sidebar.
-  chrome.action.onClicked.addListener((tab) => {
-    // Send a message to the active tab's content script to toggle the sidebar.
-    chrome.tabs.sendMessage(tab.id, { action: "toggleSidebar" });
+
+  // Listen for messages to toggle the sidebar visibility.
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    console.log("Content script received message:", message);
+    if (message.action === "toggleSidebar") {
+      const currentDisplay = window.getComputedStyle(panel).display;
+      if (currentDisplay === 'none') {
+        panel.style.display = 'block';
+        console.log("Sidebar shown via extension button");
+      } else {
+        panel.style.display = 'none';
+        console.log("Sidebar hidden via extension button");
+      }
+      sendResponse({ status: "toggled" });
+    }
   });
-  
+})();
